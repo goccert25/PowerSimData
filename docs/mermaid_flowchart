@@ -1,0 +1,30 @@
+flowchart TD
+    U[User] --> N["scenario = Scenario('')"]
+    N --> B["scenario.set_builder"]
+    subgraph create[Create]
+    B
+    subgraph inputs[Set Simulation Inputs]
+    S["scenario.set_*"] <--> CT[optional: scenario.change_table]
+    end
+    B --> S
+    S --> C["scenario.create_scenario"]
+    end
+
+    subgraph execute[Execute]
+    P["scenario.prepare_simulation"]
+    L["scenario.launch_simulation"]
+    P --> L
+    end
+
+    C --> P
+    U --> LE["scenario = Scenario(##)"]
+    LE --> execute
+    subgraph analyze[Analyze]
+    PR["Import PostREISE to access functions to
+    visualize the data contained in this scenario."]
+    end
+    L -. "After the simulation completes,
+    the scenario will be in the analyze state,
+    but must be re-instantiated to access." .-> analyze
+
+    LE --> analyze
