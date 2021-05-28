@@ -35,6 +35,7 @@ class CsvStore:
     def __init__(self, data_access):
         """Constructor"""
         self.data_access = data_access
+        self.local_dir = server_setup.LOCAL_DIR
 
     def get_table(self):
         """Read the given file from the server, falling back to local copy if
@@ -43,7 +44,7 @@ class CsvStore:
         :return: (*pandas.DataFrame*) -- the specified table as a data frame.
         """
         filename = self._FILE_NAME
-        local_path = Path(server_setup.LOCAL_DIR, filename)
+        local_path = Path(self.local_dir, filename)
 
         try:
             self.data_access.copy_from(filename)
@@ -74,9 +75,9 @@ class CsvStore:
         :param pandas.DataFrame table: the data frame to save
         :param str checksum: the checksum prior to download
         """
-        tmp_file, tmp_path = mkstemp(dir=server_setup.LOCAL_DIR)
+        tmp_file, tmp_path = mkstemp(dir=self.local_dir)
         table.to_csv(tmp_path)
-        shutil.copy(tmp_path, os.path.join(server_setup.LOCAL_DIR, self._FILE_NAME))
+        shutil.copy(tmp_path, os.path.join(self.local_dir, self._FILE_NAME))
         os.close(tmp_file)
         tmp_name = os.path.basename(tmp_path)
         self.data_access.push(tmp_name, checksum, change_name_to=self._FILE_NAME)
