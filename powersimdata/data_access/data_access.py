@@ -7,6 +7,7 @@ import time
 from subprocess import Popen
 from tempfile import mkstemp
 
+import fs
 import paramiko
 from tqdm import tqdm
 
@@ -297,10 +298,32 @@ class SSHDataAccess(DataAccess):
         """Constructor"""
         super().__init__(root, backup_root)
         self._ssh = None
+        self._fs = None
         self._retry_after = 5
         self.local_root = server_setup.LOCAL_DIR
         self.description = "server"
         self.join = posixpath.join
+
+    @property
+    def ssh_fs(self):
+        """Get or create the ssh filesystem, with attempts rate limited.
+
+        :raises IOError: if connection failed or still within retry window
+        :return: (*fs.sshfs.SSHFS*) -- the open filesystem instance
+        """
+        should_attempt = time.time() - SSHDataAccess._last_attempt > self._retry_after
+        if self._fs is None:
+            try:
+                self._fs = fs.open_fs(
+                    f"ssh://{server_setup.get_server_user()}@{server_setup.SERVER_ADDRESS}"
+                )
+                return self._fs
+            except:  # noqa
+                SSHDataAccess._last_attempt = time.time()
+            msg = f"Could not connect to server, will try again after {self._retry_after} seconds"
+            raise IOError(msg)
+
+        return self._fs
 
     @property
     def ssh(self):
