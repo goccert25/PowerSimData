@@ -180,6 +180,7 @@ class LocalDataAccess(DataAccess):
         super().__init__(root)
         self.description = "local machine"
         self.join = os.path.join
+        self.fs = fs.open_fs(server_setup.LOCAL_DIR)
 
     def copy_from(self, file_name, from_dir=None):
         """Copy a file from data store to userspace.
@@ -215,13 +216,12 @@ class LocalDataAccess(DataAccess):
         :param str change_name_to: new name for file when copied to data store.
         """
         self._check_filename(file_name)
-        src = self.join(server_setup.LOCAL_DIR, file_name)
         file_name = file_name if change_name_to is None else change_name_to
-        dest = self.join(self.root, to_dir, file_name)
-        print(f"--> Moving file {src} to {dest}")
+        dest = self.join(to_dir, file_name)
+        print(f"--> Moving file {file_name} to {dest}")
         self._check_file_exists(dest, should_exist=False)
-        self.makedir(os.path.dirname(dest))
-        shutil.move(src, dest)
+        self.fs.makedirs(to_dir, recreate=True)
+        self.fs.move(file_name, dest)
 
     def makedir(self, full_path):
         """Create path on local machine
@@ -286,7 +286,7 @@ class LocalDataAccess(DataAccess):
         :param str filepath: the path to the file
         :return: (*bool*) -- whether the file exists
         """
-        return os.path.exists(filepath)
+        return self.fs.exists(filepath)
 
 
 class SSHDataAccess(DataAccess):
@@ -374,6 +374,28 @@ class SSHDataAccess(DataAccess):
         self._ssh = client
 
     def copy_from(self, file_name, from_dir=None):
+        """Copy a file from data store to userspace.
+
+        :param str file_name: file name to copy.
+        :param str from_dir: data store directory to copy file from.
+        """
+        self._check_filename(file_name)
+        from_dir = "" if from_dir is None else from_dir
+        to_dir = os.path.join(self.local_root, from_dir)
+        os.makedirs(to_dir, exist_ok=True)
+
+        from_path = self.join(self.root, from_dir, file_name)
+        to_path = os.path.join(to_dir, file_name)
+
+        print(f"Transferring {file_name} from server")
+        cbk, bar = progress_bar(ascii=True, unit="b", unit_scale=True)
+        tmp_file, tmp_path = mkstemp()
+        self.ssh_fs.download(from_path, tmp_file, callback=cbk)
+        bar.close()
+        os.close(tmp_file)
+        shutil.move(tmp_path, to_path)
+
+    def old_copy_from(self, file_name, from_dir=None):
         """Copy a file from data store to userspace.
 
         :param str file_name: file name to copy.
@@ -491,12 +513,8 @@ class SSHDataAccess(DataAccess):
         """Create path on server
 
         :param str full_path: the path, excluding filename
-        :raises IOError: if command generated stderr
         """
-        _, _, stderr = self.ssh.exec_command(f"mkdir -p {full_path}")
-        errors = stderr.readlines()
-        if len(errors) > 0:
-            raise IOError(f"Failed to create {full_path} on server")
+        self.ssh_fs.makedirs(full_path, recreate=True)
 
     def copy(self, src, dest, recursive=False, update=False):
         """Wrapper around cp command which creates dest path if needed
@@ -504,14 +522,13 @@ class SSHDataAccess(DataAccess):
         :param str src: path to original
         :param str dest: destination path
         :param bool recursive: create directories recursively
-        :param bool update: only copy if needed
-        :raises IOError: if command generated stderr
+        :param bool update: ignored
         """
-        self.makedir(dest)
-        command = CommandBuilder.copy(src, dest, recursive, update)
-        _, _, stderr = self.ssh.exec_command(command)
-        if len(stderr.readlines()) != 0:
-            raise IOError(f"Failed to execute {command}")
+        if recursive:
+            self.ssh_fs.copydir(src, dest, create=True)
+        else:
+            for match in self.ssh_fs.glob(src):
+                self.ssh_fs.copy(match, dest)
 
     def remove(self, target, recursive=False, confirm=True):
         """Run rm command on server
@@ -538,8 +555,7 @@ class SSHDataAccess(DataAccess):
         :param str filepath: the path to the file
         :return: (*bool*) -- whether the file exists
         """
-        _, _, stderr = self.ssh.exec_command(f"ls {filepath}")
-        return len(stderr.readlines()) == 0
+        return self.ssh_fs.exists(filepath)
 
     def close(self):
         """Close the connection if one is open"""
